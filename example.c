@@ -161,7 +161,7 @@ static void dump_structure(const struct structure_node *node, size_t level) {
 static void get_structure_response(struct structure_node *root, void *userdata) {
   fprintf(stderr, "got structure callback\n");
   dump_structure(root, 0);
-//  structure_destroy(root);
+  structure_destroy(root);
 }
 
 

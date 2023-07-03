@@ -50,8 +50,8 @@ bool viaems_create_protocol(struct protocol **dest) {
 
 void viaems_destroy_protocol(struct protocol **proto) {
 
-  if ((*proto)->root) {
-    /* Free that */
+  for (int i = 0; i < (*proto)->n_feed_fields; i++) {
+    free((*proto)->field_keys[i].name);
   }
   free(*proto);
   *proto = NULL;
@@ -497,6 +497,11 @@ static void structure_destroy_child(struct structure_node *node) {
       free(node->leaf.description);
     }
     if (node->leaf.choices) {
+      char **choice = node->leaf.choices;
+      while (*choice) {
+        free(*choice);
+        choice++;
+      }
       free(node->leaf.choices);
     }
   } else if (node->type == LIST) {
