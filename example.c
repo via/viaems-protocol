@@ -141,7 +141,18 @@ static void dump_structure(const struct structure_node *node, size_t level) {
       dump_structure(&node->list.list[i], level + 1);
     } 
   } else if (node->type == LEAF) {
-    printf("(%s) %s\n", config_value_type_as_string(node->leaf.type), node->leaf.description ? node->leaf.description : "");
+    if (node->leaf.choices) {
+      printf("(%s) %s [", config_value_type_as_string(node->leaf.type), node->leaf.description ? node->leaf.description : "");
+      char **choice = node->leaf.choices;
+      while (*choice) {
+        printf("%s,", *choice);
+        choice++;
+      }
+      printf("]\n");
+
+    } else {
+      printf("(%s) %s\n", config_value_type_as_string(node->leaf.type), node->leaf.description ? node->leaf.description : "");
+    }
   }
 }
 

@@ -327,6 +327,32 @@ static const char *parse_leaf_description(CborValue *entry) {
   return desc;
 }
 
+static char **parse_leaf_choices(CborValue *entry) {
+  CborValue cbor_choices;
+  if (cbor_value_map_find_value(entry, "choices", &cbor_choices) != CborNoError) {
+    return NULL;
+  }
+  if (!cbor_value_is_array(&cbor_choices)) {
+    return NULL;
+  }
+  size_t count = calculate_container_length(&cbor_choices);
+  char **choices = calloc(sizeof(const char *), count + 1);
+  choices[count] = NULL;
+
+  CborValue choice_item;
+  cbor_value_enter_container(&cbor_choices, &choice_item);
+  for (int i = 0; i < count; i++) {
+    size_t choice_len;
+    if (cbor_value_calculate_string_length(&choice_item, &choice_len) != CborNoError) {
+      return NULL;
+    }
+    choice_len += 1; // Account for the null
+    choices[i] = malloc(choice_len);
+    cbor_value_copy_text_string(&choice_item, choices[i], &choice_len, &choice_item);
+  }
+  return choices;
+}
+
 static bool parse_structure_leaf_into_node(struct structure_node *dest, CborValue *entry) {
 
   dest->leaf.type = parse_leaf_type(entry);
@@ -335,7 +361,7 @@ static bool parse_structure_leaf_into_node(struct structure_node *dest, CborValu
   }
 
   if (dest->leaf.type == VALUE_STRING) {
-//    dest->leaf.choices = parse_leaf_choices(entry);
+    dest->leaf.choices = parse_leaf_choices(entry);
   }
 
   dest->leaf.description = parse_leaf_description(entry);
@@ -384,9 +410,9 @@ static void handle_response_message(struct protocol *p, CborValue *msg) {
   }
 
   if (p->request.type == STRUCTURE) {
-    struct structure_node root;
-    parse_cbor_structure_into_node(&root, &cbor_response);
-    p->request.structure_cb(&root, p->request.userdata);
+    struct structure_node *root = malloc(sizeof(struct structure_node));;
+    parse_cbor_structure_into_node(root, &cbor_response);
+    p->request.structure_cb(root, p->request.userdata);
   }
 }
 
@@ -464,10 +490,13 @@ bool viaems_send_get_structure(struct protocol *p, structure_callback cb, void *
 }
 
 
-void structure_destroy(struct structure_node *node) {
+static void structure_destroy_child(struct structure_node *node) {
   if (node->type == LEAF) {
     if (node->leaf.description) {
       free(node->leaf.description);
+    }
+    if (node->leaf.choices) {
+      free(node->leaf.choices);
     }
   } else if (node->type == LIST) {
     for (int i = 0; i < node->list.len; i++) {
@@ -482,6 +511,11 @@ void structure_destroy(struct structure_node *node) {
     free(node->map.list);
     free(node->map.names);
   }
+}
+
+void structure_destroy(struct structure_node *node) {
+  structure_destroy_child(node);
+  free(node);
 }
 
 
