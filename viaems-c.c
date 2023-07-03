@@ -103,6 +103,7 @@ static void handle_desc_message(struct protocol *p, CborValue *msg) {
       if (cbor_value_calculate_string_length(&i, &len) != CborNoError) {
         return;
       }
+      len += 1; /* Account for null byte */
       k->name = malloc(len);
       if (!k->name) {
         return;
@@ -500,12 +501,12 @@ static void structure_destroy_child(struct structure_node *node) {
     }
   } else if (node->type == LIST) {
     for (int i = 0; i < node->list.len; i++) {
-      structure_destroy(&node->list.list[i]);
+      structure_destroy_child(&node->list.list[i]);
     }
     free(node->list.list);
   } else if (node->type == MAP) {
     for (int i = 0; i < node->map.len; i++) {
-      structure_destroy(&node->map.list[i]);
+      structure_destroy_child(&node->map.list[i]);
       free(node->map.names[i]);
     }
     free(node->map.list);

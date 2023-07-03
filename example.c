@@ -47,7 +47,7 @@ static void read_callback(struct libusb_transfer *xfer) {
 
 thrd_t usb_thread;
 
-static int usb_loop(void *) {
+static int usb_loop(void *v) {
      while (count < 100000) {
        libusb_handle_events(NULL);
      }
