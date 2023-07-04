@@ -52,6 +52,17 @@ static inline const char *config_value_type_as_string(const config_value_type t)
   }
 }
 
+struct path_element {
+  enum {
+    PATH_STR,
+    PATH_IDX,
+  } type;
+  union {
+    char *str;
+    uint32_t idx;
+  };
+};
+
 struct structure_node;
 struct structure_list {
   size_t len;
@@ -71,6 +82,7 @@ struct structure_leaf {
 };
 
 struct structure_node {
+  struct path_element **path;
   enum {
     LEAF,
     LIST,
@@ -104,8 +116,6 @@ bool viaems_new_data(struct protocol *, const uint8_t *data, size_t len);
 
 bool viaems_send_get_structure(struct protocol *p, structure_callback, void *userdata);
 bool viaems_send_get_uint32(struct protocol *p, struct structure_node *node, get_uint32_callback, void *userdata);
-
-
 
 bool viaems_get_structure_blocking(struct protocol *p, struct structure_node **node);
 bool viaems_get_uint32_blocking(struct protocol *p, uint32_t *value);

@@ -184,9 +184,41 @@ static size_t calculate_container_length(const CborValue *value) {
   return count;// no call to leave container, leave `value` unaltered
 }
 
-static bool parse_cbor_structure_into_node(struct structure_node *dest, CborValue *entry);
+static bool parse_cbor_structure_into_node(struct structure_node *dest, struct path_element **path, CborValue *entry);
 
-static bool parse_structure_list_into_node(struct structure_node *dest, CborValue *entry) {
+
+static struct path_element **duplicate_and_extend_path_element(struct path_element **previous, struct path_element new) {
+  size_t current_len = 0;
+  if (previous) {
+    for (struct path_element **p = previous; *p != NULL; p++);
+    current_len++;
+  }
+
+  struct path_element **retval = calloc(sizeof(struct path_element *), current_len + 2); /* One extra new element, one null terminator */
+  if (!retval) {
+    return NULL;
+  }
+  for (int i = 0; i < current_len; i++) {
+    struct path_element *newcopy = malloc(sizeof(struct path_element));
+    if (!newcopy) {
+      return NULL;
+    }
+    *newcopy = *previous[i];
+    retval[i] = newcopy;
+  }
+
+  struct path_element *newcopy = malloc(sizeof(struct path_element));
+  if (!newcopy) {
+    return NULL;
+  }
+  *newcopy = new;
+  retval[current_len] = newcopy;
+  retval[current_len + 1] = NULL;
+  return retval;
+
+}
+
+static bool parse_structure_list_into_node(struct structure_node *dest, struct path_element **path, CborValue *entry) {
   size_t len = calculate_container_length(entry);
   struct structure_node *list = calloc(sizeof(struct structure_node), len);
   if (!list) {
@@ -198,20 +230,25 @@ static bool parse_structure_list_into_node(struct structure_node *dest, CborValu
     return false;
   }
   for (int i = 0; i < len; i++) {
-    if (!parse_cbor_structure_into_node(&list[i], &element)) {
+    struct path_element **newpath = duplicate_and_extend_path_element(path, (struct path_element){
+        .type = PATH_IDX,
+        .idx = i,
+        });
+    if (!parse_cbor_structure_into_node(&list[i], newpath, &element)) {
       return false;
     }
   }
   cbor_value_leave_container(entry, &element);
 
   dest->type = LIST;
+  dest->path = path;
   dest->list.len = len;
   dest->list.list = list;
 
   return true;
 }
 
-static bool parse_structure_map_into_node(struct structure_node *dest, CborValue *entry) {
+static bool parse_structure_map_into_node(struct structure_node *dest, struct path_element **path, CborValue *entry) {
   size_t len = calculate_container_length(entry);
   if (len % 2 != 0) {
     return false;
@@ -241,13 +278,19 @@ static bool parse_structure_map_into_node(struct structure_node *dest, CborValue
     names[i] = malloc(keylen);
     cbor_value_copy_text_string(&element, names[i], &keylen, &element);
 
-    if (!parse_cbor_structure_into_node(&list[i], &element)) {
+    struct path_element **newpath = duplicate_and_extend_path_element(path, (struct path_element){
+        .type = PATH_STR,
+        .str = names[i],
+        });
+
+    if (!parse_cbor_structure_into_node(&list[i], newpath, &element)) {
       return false;
     }
   }
   cbor_value_leave_container(entry, &element);
 
   dest->type = MAP;
+  dest->path = path;
   dest->map.len = len;
   dest->map.list = list;
   dest->map.names = names;
@@ -354,7 +397,7 @@ static char **parse_leaf_choices(CborValue *entry) {
   return choices;
 }
 
-static bool parse_structure_leaf_into_node(struct structure_node *dest, CborValue *entry) {
+static bool parse_structure_leaf_into_node(struct structure_node *dest, struct path_element **path, CborValue *entry) {
 
   dest->leaf.type = parse_leaf_type(entry);
   if (dest->leaf.type == VALUE_INVALID) {
@@ -367,22 +410,24 @@ static bool parse_structure_leaf_into_node(struct structure_node *dest, CborValu
 
   dest->leaf.description = parse_leaf_description(entry);
   dest->type = LEAF;
+  dest->path = path;
   cbor_value_advance(entry);
   return true;
 }
 
-static bool parse_cbor_structure_into_node(struct structure_node *dest, CborValue *entry) {
+static bool parse_cbor_structure_into_node(struct structure_node *dest, struct path_element **path, CborValue *entry) {
+
   if (cbor_value_is_array(entry)) {
-    return parse_structure_list_into_node(dest, entry);
+    return parse_structure_list_into_node(dest, path, entry);
   } else if (cbor_value_is_map(entry)) {
     CborValue cbor_type;
     cbor_value_map_find_value(entry, "_type", &cbor_type);
     if (cbor_value_get_type(&cbor_type) == CborInvalidType) {
       /* Not a leaf, parse as a map */
-      return parse_structure_map_into_node(dest, entry);
+      return parse_structure_map_into_node(dest, path, entry);
     } else {
       /* Is a leaf, parse out the details */
-      return parse_structure_leaf_into_node(dest, entry);
+      return parse_structure_leaf_into_node(dest, path, entry);
     }
   }
   return false;
@@ -412,7 +457,7 @@ static void handle_response_message(struct protocol *p, CborValue *msg) {
 
   if (p->request.type == STRUCTURE) {
     struct structure_node *root = malloc(sizeof(struct structure_node));;
-    parse_cbor_structure_into_node(root, &cbor_response);
+    parse_cbor_structure_into_node(root, NULL, &cbor_response);
     p->request.structure_cb(root, p->request.userdata);
   }
 }
@@ -492,6 +537,12 @@ bool viaems_send_get_structure(struct protocol *p, structure_callback cb, void *
 
 
 static void structure_destroy_child(struct structure_node *node) {
+  if (node->path) {
+    for (struct path_element **p = node->path; *p != NULL; p++) {
+      free(*p);
+    }
+    free(node->path);
+  }
   if (node->type == LEAF) {
     if (node->leaf.description) {
       free(node->leaf.description);

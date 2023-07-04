@@ -47,10 +47,22 @@ static void read_callback(struct libusb_transfer *xfer) {
 
 thrd_t usb_thread;
 
-static int usb_loop(void *v) {
-     while (count < 100000) {
-       libusb_handle_events(NULL);
-     }
+struct {
+  struct libusb_transfer *xfer;
+  uint8_t buf[16384];
+} xfers[4] = {};
+
+static int usb_loop(void *none) {
+  while (count < 100000) {
+    libusb_handle_events(NULL);
+  }
+  libusb_free_transfer(xfers[0].xfer);
+  libusb_free_transfer(xfers[1].xfer);
+  libusb_free_transfer(xfers[2].xfer);
+  libusb_free_transfer(xfers[3].xfer);
+  libusb_close(devh);
+  libusb_exit(NULL);
+  return 0;
 }
 
 void do_usb(struct protocol *p) {
@@ -96,11 +108,6 @@ void do_usb(struct protocol *p) {
       return;
     }
 
-     struct {
-       struct libusb_transfer *xfer;
-       uint8_t buf[16384];
-     } xfers[4];
-
      for (int i = 0; i < 4; i++) {
        xfers[i].xfer = libusb_alloc_transfer(0);
        if (!xfers[i].xfer) {
@@ -125,7 +132,23 @@ static void indent(size_t l) {
   }
 }
 
+static void dump_path(struct path_element **path) {
+  fprintf(stderr, "[");
+  if (path) {
+    for (struct path_element **p = path; *p != NULL; p++) {
+      if ((*p)->type == PATH_IDX) {
+        fprintf(stderr, " %lu ", (*p)->idx);
+      } else if ((*p)->type == PATH_STR) {
+        fprintf(stderr, " %s ", (*p)->str);
+      }
+    }
+  }
+  fprintf(stderr, "]\n");
+}
+
+
 static void dump_structure(const struct structure_node *node, size_t level) {
+  dump_path(node->path);
   if (node->type == LIST) {
     for (int i = 0; i < node->list.len; i++) {
       printf("\n");
