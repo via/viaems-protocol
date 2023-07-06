@@ -28,10 +28,9 @@ static void new_feed_data(size_t n_fields, const struct field_key *keys, const u
 
 static void usb_write(void *userdata, const uint8_t *bytes, size_t len) {
   int actual_length;
-  if (libusb_bulk_transfer(devh, 0x1, bytes, len,
-        &actual_length, 0) < 0) {
-    fprintf(stderr, "Error while sending char\n");
-  }
+  int rc;
+  while (libusb_bulk_transfer(devh, 0x1, bytes, len,
+        &actual_length, 0) < 0);
 }
 
 static void read_callback(struct libusb_transfer *xfer) {
@@ -180,11 +179,17 @@ static void dump_structure(const struct structure_node *node, size_t level) {
 }
 
 
+static struct structure_node *config_structure = NULL;
+static struct protocol *proto = NULL;
+
+static void get_uint32_response(uint32_t value, void *ud) {
+  fprintf(stderr, "got uint32: %u\n", value); 
+}
 
 static void get_structure_response(struct structure_node *root, void *userdata) {
   fprintf(stderr, "got structure callback\n");
   dump_structure(root, 0);
-  structure_destroy(root);
+  config_structure = root;
 }
 
 
@@ -197,8 +202,9 @@ int main(void) {
   viaems_set_feed_cb(p, new_feed_data);
 
   do_usb(p);
+  proto = p;
 
-  viaems_send_get_structure(p, get_structure_response, NULL);
+  viaems_get_structure(p, &config_structure);
 
   thrd_join(usb_thread, NULL);
   viaems_destroy_protocol(&p);

@@ -52,6 +52,28 @@ static inline const char *config_value_type_as_string(const config_value_type t)
   }
 }
 
+struct sensor_value {
+};
+
+struct table_value {
+};
+
+struct output_value {
+};
+
+struct config_value {
+  config_value_type type;
+  union {
+    uint32_t as_uint32;
+    float as_float;
+    bool as_bool;
+    char *as_string;
+    struct sensor_value *as_sensor;
+    struct table_value *as_table;
+    struct output_value *as_output;
+  };
+};
+
 struct path_element {
   enum {
     PATH_STR,
@@ -105,7 +127,7 @@ typedef void (*write_fn)(void *userdata, const uint8_t *bytes, size_t len);
 
 typedef void (*feed_callback)(size_t n_fields, const struct field_key *keys, const union field_value *);
 typedef void (*structure_callback)(struct structure_node *root, void *userdata);
-typedef void (*get_uint32_callback)(uint32_t value, void *userdata);
+typedef void (*get_callback)(struct config_value value, void *userdata);
 
 struct protocol;
 bool viaems_create_protocol(struct protocol **);
@@ -114,10 +136,9 @@ void viaems_set_write_fn(struct protocol *, write_fn, void *userdata);
 void viaems_set_feed_cb(struct protocol *, feed_callback);
 bool viaems_new_data(struct protocol *, const uint8_t *data, size_t len);
 
-bool viaems_send_get_structure(struct protocol *p, structure_callback, void *userdata);
-bool viaems_send_get_uint32(struct protocol *p, struct structure_node *node, get_uint32_callback, void *userdata);
-
-bool viaems_get_structure_blocking(struct protocol *p, struct structure_node **node);
-bool viaems_get_uint32_blocking(struct protocol *p, uint32_t *value);
+bool viaems_get_structure_async(struct protocol *p, structure_callback cb, void *userdata);
+bool viaems_get_structure(struct protocol *p, struct structure_node **);
+bool viaems_send_get_async(struct protocol *p, struct structure_node *node, get_callback callback, void *userdata);
+bool viaems_send_get(struct protocol *p, struct structure_node *node, struct config_value *dest);
 
 #endif
