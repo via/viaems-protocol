@@ -124,6 +124,40 @@ void do_usb(struct protocol *p) {
      thrd_create(&usb_thread, usb_loop, NULL);
 }
 
+static int to_fds[2];
+static int from_fds[2];
+static thrd_t sim_thread;
+
+static int sim_loop(void *ptr) {
+  struct protocol *p = ptr;
+  while (true) {
+    uint8_t buf[16384];
+    ssize_t amt = read(from_fds[0], buf, sizeof(buf));
+    viaems_new_data(p, buf, amt);
+  }
+}
+
+static void sim_write(void *userdata, const uint8_t *bytes, size_t len) {
+  ssize_t amt = write(to_fds[1], bytes, len);
+  fprintf(stderr, "wrote %d bytes\n", amt);
+}
+
+static void do_sim(struct protocol *p, const char *path) {
+  pipe(to_fds);
+  pipe(from_fds);
+  pid_t pid = fork();
+  if (pid == 0) {
+    dup2(to_fds[0], 0);
+    dup2(from_fds[1], 1);
+    char *const argv[] = {path, NULL};
+    execv(path, argv);
+  }
+
+  viaems_set_write_fn(p, sim_write, NULL);
+  thrd_create(&sim_thread, sim_loop, p);
+}
+  
+
 static void indent(size_t l) {
   while(l > 0) {
     printf("    ");
@@ -193,6 +227,23 @@ static void get_structure_response(struct structure_node *root, void *userdata) 
 }
 
 
+static int doer(void *ptr) {
+  struct protocol *p = ptr;
+
+  struct structure_node *root;
+  if (!viaems_get_structure(p, &root)) {
+    fprintf(stderr, "failed: viaems_get_structure\n");
+    return 0;
+  }
+
+  struct structure_node *n = &root->map.list[0].map.list[2];
+  struct config_value val;
+  viaems_send_get(p, n, &val);
+  fprintf(stderr, "GOT %u\n", (unsigned int)val.as_uint32);
+  return 0;
+}
+
+
 int main(void) {
   struct protocol *p;
 
@@ -201,12 +252,25 @@ int main(void) {
   }
   viaems_set_feed_cb(p, new_feed_data);
 
-  do_usb(p);
+//  do_usb(p);
+  do_sim(p, "/home/user/dev/viaems/obj/hosted/viaems");
   proto = p;
 
+#if 0
   viaems_get_structure(p, &config_structure);
+  dump_structure(config_structure, 0);
 
-  thrd_join(usb_thread, NULL);
+  struct structure_node *n = &config_structure->map.list[0].map.list[2];
+  struct config_value val;
+  viaems_send_get(p, n, &val);
+
+#endif
+  thrd_t threads[50];
+  for (int i = 0; i < 50; i++) {
+    thrd_create(&threads[i], doer, p);
+  }
+//  thrd_join(usb_thread, NULL);
+  thrd_join(sim_thread, NULL);
   viaems_destroy_protocol(&p);
   return 0;
 }

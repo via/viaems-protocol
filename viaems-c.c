@@ -13,6 +13,10 @@ typedef enum {
   SET,
 } request_type;
 
+static void check_thrd(int val) {
+  assert(val == thrd_success);
+}
+
 struct request {
   bool active;
   uint32_t id;
@@ -28,8 +32,6 @@ struct request {
 
 #define MAX_KEYS 64
 struct protocol {
-  struct structure_node *root;
-
   size_t n_feed_fields;
   struct field_key field_keys[MAX_KEYS];
   feed_callback feed_cb;
@@ -52,6 +54,8 @@ bool viaems_create_protocol(struct protocol **dest) {
 
   memset(*dest, 0, sizeof(struct protocol));
   mtx_init(&(*dest)->request_mtx, mtx_plain);
+  mtx_init(&(*dest)->request_client_mtx, mtx_plain);
+  cnd_init(&(*dest)->request_wakeup_cnd);
   return true;
 }
 
@@ -454,15 +458,15 @@ static void handle_response_message(struct protocol *p, CborValue *msg) {
   uint64_t id;
   cbor_value_get_uint64(&cbor_id, &id);
 
-  mtx_lock(&p->request_mtx);
+  check_thrd(mtx_lock(&p->request_mtx));
   if (!p->request.active || p->request.id != id) {
-    mtx_unlock(&p->request_mtx);
+    check_thrd(mtx_unlock(&p->request_mtx));
     return;
   }
 
   CborValue cbor_response;
   if (cbor_value_map_find_value(msg, "response", &cbor_response) != CborNoError) {
-    mtx_unlock(&p->request_mtx);
+    check_thrd(mtx_unlock(&p->request_mtx));
     return;
   }
 
@@ -470,7 +474,6 @@ static void handle_response_message(struct protocol *p, CborValue *msg) {
     struct structure_node *root = malloc(sizeof(struct structure_node));;
     parse_cbor_structure_into_node(root, NULL, &cbor_response);
     p->request.structure_cb(root, p->request.userdata);
-    p->request.active = false;
   } else if (p->request.type == GET) {
     switch (p->request.node->leaf.type) {
       case VALUE_UINT32: {
@@ -479,14 +482,14 @@ static void handle_response_message(struct protocol *p, CborValue *msg) {
         cbor_value_get_uint64(&cbor_response, &u64val);
         val.as_uint32 = u64val;
         p->request.get_callback(val, p->request.userdata);
-        p->request.active = false;
-                         }
       default:
+                         }
     }
   }
 
-    mtx_unlock(&p->request_mtx);
-    mtx_unlock(&p->request_client_mtx);
+    p->request.active = false;
+    check_thrd(mtx_unlock(&p->request_mtx));
+    check_thrd(mtx_unlock(&p->request_client_mtx));
 
 }
 
@@ -536,9 +539,9 @@ static void blocking_structure_callback(struct structure_node *root, void *userd
 
 bool viaems_get_structure_async(struct protocol *p, structure_callback callback, void *userdata) {
 
-  mtx_lock(&p->request_client_mtx);
+  check_thrd(mtx_lock(&p->request_client_mtx));
 
-  mtx_lock(&p->request_mtx);
+  check_thrd(mtx_lock(&p->request_mtx));
   p->request = (struct request){
     .active = true,
     .type = STRUCTURE,
@@ -547,7 +550,7 @@ bool viaems_get_structure_async(struct protocol *p, structure_callback callback,
     .userdata = userdata,
   };
 
-  mtx_unlock(&p->request_mtx);
+  check_thrd(mtx_unlock(&p->request_mtx));
 
   uint8_t buf[512];
   CborEncoder encoder;
@@ -571,12 +574,14 @@ bool viaems_get_structure_async(struct protocol *p, structure_callback callback,
 
 bool viaems_get_structure(struct protocol *p, struct structure_node **res) {
 
-  viaems_get_structure_async(p, blocking_structure_callback, &p);
+  viaems_get_structure_async(p, blocking_structure_callback, p);
 
-  mtx_lock(&p->request_mtx);
-  cnd_wait(&p->request_wakeup_cnd, &p->request_mtx);
+  check_thrd(mtx_lock(&p->request_mtx));
+  do {
+    cnd_wait(&p->request_wakeup_cnd, &p->request_mtx);
+  } while (p->request.active == true);
   *res = p->request.node;
-  mtx_unlock(&p->request_mtx);
+  check_thrd(mtx_unlock(&p->request_mtx));
 
   return true;
 }
@@ -586,9 +591,9 @@ bool viaems_send_get_async(struct protocol *p, struct structure_node *node, get_
     return false;
   }
 
-  mtx_lock(&p->request_client_mtx);
+  check_thrd(mtx_lock(&p->request_client_mtx));
 
-  mtx_lock(&p->request_mtx);
+  check_thrd(mtx_lock(&p->request_mtx));
   p->request = (struct request){
     .active = true,
     .type = GET,
@@ -597,7 +602,7 @@ bool viaems_send_get_async(struct protocol *p, struct structure_node *node, get_
     .get_callback = cb,
     .userdata = ud,
   };
-  mtx_unlock(&p->request_mtx);
+  check_thrd(mtx_unlock(&p->request_mtx));
 
   uint8_t buf[512];
   CborEncoder encoder;
@@ -628,6 +633,26 @@ bool viaems_send_get_async(struct protocol *p, struct structure_node *node, get_
   if (p->write) {
     p->write(p->write_userdata, buf, written_size);
   }
+  return true;
+}
+
+static void blocking_get_callback(struct config_value value, void *userdata) {
+  struct protocol *proto = userdata;
+  proto->request.value = value;
+  cnd_signal(&proto->request_wakeup_cnd);
+}
+
+bool viaems_send_get(struct protocol *p, struct structure_node *node, struct config_value *dest) {
+
+  viaems_send_get_async(p, node, blocking_get_callback, p);
+
+  check_thrd(mtx_lock(&p->request_mtx));
+  do {
+    cnd_wait(&p->request_wakeup_cnd, &p->request_mtx);
+  } while (p->request.active);
+  *dest = p->request.value;
+  check_thrd(mtx_unlock(&p->request_mtx));
+
   return true;
 }
 
