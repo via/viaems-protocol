@@ -13,10 +13,6 @@ typedef enum {
   SET,
 } request_type;
 
-static void check_thrd(int val) {
-  assert(val == thrd_success);
-}
-
 struct request {
   bool active;
   uint32_t id;
@@ -44,6 +40,10 @@ struct protocol {
   cnd_t request_wakeup_cnd;
   struct request request;
 };
+
+static void check_thrd(int val) {
+  assert(val == thrd_success);
+}
 
 bool viaems_create_protocol(struct protocol **dest) {
   assert(dest);
@@ -129,11 +129,13 @@ static void handle_desc_message(struct protocol *p, CborValue *msg) {
   }
 
   p->n_feed_fields = n_keys;
+#if 0
   fprintf(stderr, "%lu: ", n_keys);
   for (int i = 0; i < n_keys; i++) {
     fprintf(stderr, "'%s' ", p->field_keys[i].name);
   }
   fprintf(stderr, "\n");
+#endif
 }
 
 static void handle_feed_message(struct protocol *p, CborValue *msg) {
@@ -460,12 +462,14 @@ static void handle_response_message(struct protocol *p, CborValue *msg) {
 
   check_thrd(mtx_lock(&p->request_mtx));
   if (!p->request.active || p->request.id != id) {
+    fprintf(stderr, "Does this happen?\n");
     check_thrd(mtx_unlock(&p->request_mtx));
     return;
   }
 
   CborValue cbor_response;
   if (cbor_value_map_find_value(msg, "response", &cbor_response) != CborNoError) {
+    fprintf(stderr, "Does this happen2?\n");
     check_thrd(mtx_unlock(&p->request_mtx));
     return;
   }
@@ -489,7 +493,6 @@ static void handle_response_message(struct protocol *p, CborValue *msg) {
 
     p->request.active = false;
     check_thrd(mtx_unlock(&p->request_mtx));
-    check_thrd(mtx_unlock(&p->request_client_mtx));
 
 }
 
@@ -534,12 +537,11 @@ bool viaems_new_data(struct protocol *p, const uint8_t *data, size_t len) {
 static void blocking_structure_callback(struct structure_node *root, void *userdata) {
   struct protocol *proto = userdata;
   proto->request.node = root;
-  cnd_signal(&proto->request_wakeup_cnd);
+  fprintf(stderr, "cnd_signal, %d\n", (int)proto->request.active);
+  check_thrd(cnd_signal(&proto->request_wakeup_cnd));
 }
 
 bool viaems_get_structure_async(struct protocol *p, structure_callback callback, void *userdata) {
-
-  check_thrd(mtx_lock(&p->request_client_mtx));
 
   check_thrd(mtx_lock(&p->request_mtx));
   p->request = (struct request){
@@ -573,15 +575,18 @@ bool viaems_get_structure_async(struct protocol *p, structure_callback callback,
 
 
 bool viaems_get_structure(struct protocol *p, struct structure_node **res) {
+  check_thrd(mtx_lock(&p->request_client_mtx));
 
   viaems_get_structure_async(p, blocking_structure_callback, p);
 
   check_thrd(mtx_lock(&p->request_mtx));
   do {
-    cnd_wait(&p->request_wakeup_cnd, &p->request_mtx);
+    check_thrd(cnd_wait(&p->request_wakeup_cnd, &p->request_mtx));
+    fprintf(stderr, "cnd_wait returned, %d\n", (int)p->request.active);
   } while (p->request.active == true);
   *res = p->request.node;
   check_thrd(mtx_unlock(&p->request_mtx));
+  check_thrd(mtx_unlock(&p->request_client_mtx));
 
   return true;
 }
@@ -590,8 +595,6 @@ bool viaems_send_get_async(struct protocol *p, struct structure_node *node, get_
   if (node->type != LEAF) {
     return false;
   }
-
-  check_thrd(mtx_lock(&p->request_client_mtx));
 
   check_thrd(mtx_lock(&p->request_mtx));
   p->request = (struct request){
@@ -643,6 +646,7 @@ static void blocking_get_callback(struct config_value value, void *userdata) {
 }
 
 bool viaems_send_get(struct protocol *p, struct structure_node *node, struct config_value *dest) {
+  check_thrd(mtx_lock(&p->request_client_mtx));
 
   viaems_send_get_async(p, node, blocking_get_callback, p);
 
@@ -652,6 +656,7 @@ bool viaems_send_get(struct protocol *p, struct structure_node *node, struct con
   } while (p->request.active);
   *dest = p->request.value;
   check_thrd(mtx_unlock(&p->request_mtx));
+  check_thrd(mtx_unlock(&p->request_client_mtx));
 
   return true;
 }

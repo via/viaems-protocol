@@ -238,8 +238,8 @@ static int doer(void *ptr) {
 
   struct structure_node *n = &root->map.list[0].map.list[2];
   struct config_value val;
-  viaems_send_get(p, n, &val);
-  fprintf(stderr, "GOT %u\n", (unsigned int)val.as_uint32);
+//  viaems_send_get(p, n, &val);
+  fprintf(stderr, "GOT %p\n", root);
   return 0;
 }
 
@@ -269,6 +269,10 @@ int main(void) {
   for (int i = 0; i < 50; i++) {
     thrd_create(&threads[i], doer, p);
   }
+  for (int i = 0; i < 50; i++) {
+    thrd_join(threads[i], NULL);
+  }
+  fprintf(stderr, "completed!\n");
 //  thrd_join(usb_thread, NULL);
   thrd_join(sim_thread, NULL);
   viaems_destroy_protocol(&p);
