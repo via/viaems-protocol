@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <threads.h>
+#include <time.h>
 
 #include "cbor.h"
 #include "viaems-c.h"
@@ -496,7 +497,7 @@ static void handle_response_message(struct protocol *p, CborValue *msg) {
 
 }
 
-bool viaems_new_data(struct protocol *p, const uint8_t *data, size_t len) {
+bool viaems_new_data(struct protocol *p, const uint8_t *data, size_t len, size_t *used) {
   CborParser parser;
   CborValue root;
 
@@ -505,6 +506,12 @@ bool viaems_new_data(struct protocol *p, const uint8_t *data, size_t len) {
   }
   if (!cbor_value_is_map(&root)) {
     return false;
+  }
+
+  if (used) {
+    CborValue adv = root;
+    cbor_value_advance(&adv);
+    *used = cbor_value_get_next_byte(&adv) - data;
   }
 
   CborValue type_value;
@@ -537,9 +544,10 @@ bool viaems_new_data(struct protocol *p, const uint8_t *data, size_t len) {
 static void blocking_structure_callback(struct structure_node *root, void *userdata) {
   struct protocol *proto = userdata;
   proto->request.node = root;
-  fprintf(stderr, "cnd_signal, %d\n", (int)proto->request.active);
   check_thrd(cnd_signal(&proto->request_wakeup_cnd));
 }
+
+static uint32_t global_id = 1;
 
 bool viaems_get_structure_async(struct protocol *p, structure_callback callback, void *userdata) {
 
@@ -547,7 +555,7 @@ bool viaems_get_structure_async(struct protocol *p, structure_callback callback,
   p->request = (struct request){
     .active = true,
     .type = STRUCTURE,
-    .id = 1,
+    .id = global_id++,
     .structure_cb = callback,
     .userdata = userdata,
   };
@@ -573,17 +581,35 @@ bool viaems_get_structure_async(struct protocol *p, structure_callback callback,
   }
 }
 
+static struct timespec time_ms_from_now(int ms) {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  ts.tv_nsec += (ms * 1000000);
+  while (ts.tv_nsec >= 1000000000) {
+    ts.tv_nsec -= 1000000000;
+    ts.tv_sec += 1;
+  }
+  return ts;
+}
 
 bool viaems_get_structure(struct protocol *p, struct structure_node **res) {
+
   check_thrd(mtx_lock(&p->request_client_mtx));
 
+  size_t timeout_ms = 1000;
+  struct timespec ts = time_ms_from_now(timeout_ms);
   viaems_get_structure_async(p, blocking_structure_callback, p);
 
   check_thrd(mtx_lock(&p->request_mtx));
-  do {
-    check_thrd(cnd_wait(&p->request_wakeup_cnd, &p->request_mtx));
-    fprintf(stderr, "cnd_wait returned, %d\n", (int)p->request.active);
-  } while (p->request.active == true);
+  while (p->request.active) {
+    if (cnd_timedwait(&p->request_wakeup_cnd, &p->request_mtx, &ts) == thrd_timedout) {
+    p->request.active = false;
+    check_thrd(mtx_unlock(&p->request_mtx));
+    check_thrd(mtx_unlock(&p->request_client_mtx));
+    return false;
+    }
+
+  }
   *res = p->request.node;
   check_thrd(mtx_unlock(&p->request_mtx));
   check_thrd(mtx_unlock(&p->request_client_mtx));
@@ -601,7 +627,7 @@ bool viaems_send_get_async(struct protocol *p, struct structure_node *node, get_
     .active = true,
     .type = GET,
     .node = node,
-    .id = 1,
+    .id = global_id++,
     .get_callback = cb,
     .userdata = ud,
   };
@@ -647,13 +673,20 @@ static void blocking_get_callback(struct config_value value, void *userdata) {
 
 bool viaems_send_get(struct protocol *p, struct structure_node *node, struct config_value *dest) {
   check_thrd(mtx_lock(&p->request_client_mtx));
+  size_t timeout_ms = 1000;
+  struct timespec ts = time_ms_from_now(timeout_ms);
 
   viaems_send_get_async(p, node, blocking_get_callback, p);
 
   check_thrd(mtx_lock(&p->request_mtx));
-  do {
-    cnd_wait(&p->request_wakeup_cnd, &p->request_mtx);
-  } while (p->request.active);
+  while (p->request.active) {
+    if (cnd_timedwait(&p->request_wakeup_cnd, &p->request_mtx, &ts) == thrd_timedout) {
+      p->request.active = false;
+      check_thrd(mtx_unlock(&p->request_mtx));
+      check_thrd(mtx_unlock(&p->request_client_mtx));
+      return false;
+    }
+  }
   *dest = p->request.value;
   check_thrd(mtx_unlock(&p->request_mtx));
   check_thrd(mtx_unlock(&p->request_client_mtx));

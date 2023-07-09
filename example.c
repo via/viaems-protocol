@@ -37,8 +37,18 @@ static void read_callback(struct libusb_transfer *xfer) {
   const uint8_t *rxbuf = xfer->buffer;
   const size_t length = xfer->actual_length;
   struct protocol *p = xfer->user_data;
+//  fprintf(stderr, "READ: %d\n", length);
 
-  viaems_new_data(p, rxbuf, length);
+  size_t remaining = length;
+  while (remaining > 0) {
+    size_t used;
+    if (!viaems_new_data(p, rxbuf, remaining, &used)) {
+      fprintf(stderr, "failed parse\n");
+      break;
+    }
+    remaining -= used;
+    rxbuf += used;
+  }
 
   libusb_fill_bulk_transfer(xfer, devh, 0x81, xfer->buffer, xfer->length, read_callback, p, 1000);
   libusb_submit_transfer(xfer);
@@ -52,7 +62,7 @@ struct {
 } xfers[4] = {};
 
 static int usb_loop(void *none) {
-  while (count < 100000) {
+  while (count < 200000) {
     libusb_handle_events(NULL);
   }
   libusb_free_transfer(xfers[0].xfer);
@@ -133,13 +143,19 @@ static int sim_loop(void *ptr) {
   while (true) {
     uint8_t buf[16384];
     ssize_t amt = read(from_fds[0], buf, sizeof(buf));
-    viaems_new_data(p, buf, amt);
+    size_t remaining = amt;
+    uint8_t *ptr = buf;
+    while (remaining > 0) {
+      size_t used;
+      viaems_new_data(p, ptr, remaining, &used);
+      remaining -= used;
+      ptr += used;
+    }
   }
 }
 
 static void sim_write(void *userdata, const uint8_t *bytes, size_t len) {
   ssize_t amt = write(to_fds[1], bytes, len);
-  fprintf(stderr, "wrote %d bytes\n", amt);
 }
 
 static void do_sim(struct protocol *p, const char *path) {
@@ -238,8 +254,10 @@ static int doer(void *ptr) {
 
   struct structure_node *n = &root->map.list[0].map.list[2];
   struct config_value val;
-//  viaems_send_get(p, n, &val);
-  fprintf(stderr, "GOT %p\n", root);
+  if (!viaems_send_get(p, n, &val)) {
+    fprintf(stderr, "failed: viaems_send_get\n");
+    return 0;
+  }
   return 0;
 }
 
@@ -252,8 +270,8 @@ int main(void) {
   }
   viaems_set_feed_cb(p, new_feed_data);
 
-//  do_usb(p);
-  do_sim(p, "/home/user/dev/viaems/obj/hosted/viaems");
+  do_usb(p);
+//  do_sim(p, "/home/user/dev/viaems/obj/hosted/viaems");
   proto = p;
 
 #if 0
@@ -273,8 +291,8 @@ int main(void) {
     thrd_join(threads[i], NULL);
   }
   fprintf(stderr, "completed!\n");
-//  thrd_join(usb_thread, NULL);
-  thrd_join(sim_thread, NULL);
+  thrd_join(usb_thread, NULL);
+//  thrd_join(sim_thread, NULL);
   viaems_destroy_protocol(&p);
   return 0;
 }
