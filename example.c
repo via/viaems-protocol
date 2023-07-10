@@ -39,15 +39,8 @@ static void read_callback(struct libusb_transfer *xfer) {
   struct protocol *p = xfer->user_data;
 //  fprintf(stderr, "READ: %d\n", length);
 
-  size_t remaining = length;
-  while (remaining > 0) {
-    size_t used;
-    if (!viaems_new_data(p, rxbuf, remaining, &used)) {
+  if (!viaems_new_data(p, rxbuf, length)) {
       fprintf(stderr, "failed parse\n");
-      break;
-    }
-    remaining -= used;
-    rxbuf += used;
   }
 
   libusb_fill_bulk_transfer(xfer, devh, 0x81, xfer->buffer, xfer->length, read_callback, p, 1000);
@@ -62,7 +55,7 @@ struct {
 } xfers[4] = {};
 
 static int usb_loop(void *none) {
-  while (count < 200000) {
+  while (count < 15000) {
     libusb_handle_events(NULL);
   }
   libusb_free_transfer(xfers[0].xfer);
@@ -140,17 +133,13 @@ static thrd_t sim_thread;
 
 static int sim_loop(void *ptr) {
   struct protocol *p = ptr;
+  int times = 0;
   while (true) {
+    times++;
+    if (times > 100000) break;
     uint8_t buf[16384];
     ssize_t amt = read(from_fds[0], buf, sizeof(buf));
-    size_t remaining = amt;
-    uint8_t *ptr = buf;
-    while (remaining > 0) {
-      size_t used;
-      viaems_new_data(p, ptr, remaining, &used);
-      remaining -= used;
-      ptr += used;
-    }
+    viaems_new_data(p, buf, amt);
   }
 }
 

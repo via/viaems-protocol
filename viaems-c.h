@@ -134,7 +134,7 @@ bool viaems_create_protocol(struct protocol **);
 void viaems_destroy_protocol(struct protocol **);
 void viaems_set_write_fn(struct protocol *, write_fn, void *userdata);
 void viaems_set_feed_cb(struct protocol *, feed_callback);
-bool viaems_new_data(struct protocol *, const uint8_t *data, size_t len, size_t *used);
+bool viaems_new_data(struct protocol *, const uint8_t *data, size_t len);
 
 bool viaems_get_structure_async(struct protocol *p, structure_callback cb, void *userdata);
 bool viaems_get_structure(struct protocol *p, struct structure_node **);

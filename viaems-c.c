@@ -130,13 +130,6 @@ static void handle_desc_message(struct protocol *p, CborValue *msg) {
   }
 
   p->n_feed_fields = n_keys;
-#if 0
-  fprintf(stderr, "%lu: ", n_keys);
-  for (int i = 0; i < n_keys; i++) {
-    fprintf(stderr, "'%s' ", p->field_keys[i].name);
-  }
-  fprintf(stderr, "\n");
-#endif
 }
 
 static void handle_feed_message(struct protocol *p, CborValue *msg) {
@@ -497,7 +490,7 @@ static void handle_response_message(struct protocol *p, CborValue *msg) {
 
 }
 
-bool viaems_new_data(struct protocol *p, const uint8_t *data, size_t len, size_t *used) {
+bool viaems_new_data(struct protocol *p, const uint8_t *data, size_t len) {
   CborParser parser;
   CborValue root;
 
@@ -508,11 +501,6 @@ bool viaems_new_data(struct protocol *p, const uint8_t *data, size_t len, size_t
     return false;
   }
 
-  if (used) {
-    CborValue adv = root;
-    cbor_value_advance(&adv);
-    *used = cbor_value_get_next_byte(&adv) - data;
-  }
 
   CborValue type_value;
   if (cbor_value_map_find_value(&root, "type", &type_value) != CborNoError) {
