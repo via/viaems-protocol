@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <threads.h>
 #include <libusb-1.0/libusb.h>
@@ -8,7 +9,7 @@
 struct vp_usb {
   thrd_t receive_thrd;
   struct protocol *proto;
-  bool alive;
+  _Atomic bool alive;
   bool connected;
   struct libusb_device_handle *devh;
   struct {
@@ -20,7 +21,7 @@ struct vp_usb {
 static int usb_loop(void *ptr) {
   struct vp_usb *usb = ptr;
 
-  while (usb->alive) {
+  while (atomic_load_explicit(&usb->alive, memory_order_relaxed) == true) {
     libusb_handle_events(NULL);
   }
 
@@ -113,17 +114,24 @@ bool vp_usb_connect(struct vp_usb *usb, struct protocol *p) {
        }
      }
      // Start thread
+     usb->connected = true;
      viaems_set_write_fn(usb->proto, usb_write, usb);
      thrd_create(&usb->receive_thrd, usb_loop, usb);
+     return true;
 }
 
 
 struct vp_usb *vp_create_usb() {
   struct vp_usb *usb = malloc(sizeof(struct vp_usb));
   memset(usb, 0, sizeof(struct vp_usb));
+  return usb;
 }
 
-void destroy_usb_connection(struct vp_usb *usb) {
+void vp_destroy_usb(struct vp_usb *usb) {
+  if (usb->connected) {
+    usb->alive = false;
+    thrd_join(usb->receive_thrd, NULL);
+  }
   free(usb);
 }
 

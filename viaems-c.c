@@ -355,7 +355,7 @@ static config_value_type parse_leaf_type(CborValue *entry) {
   return type;
 }
 
-static const char *parse_leaf_description(CborValue *entry) {
+static char *parse_leaf_description(CborValue *entry) {
   CborValue cbor_desc;
   if (cbor_value_map_find_value(entry, "description", &cbor_desc) != CborNoError) {
     return NULL;
@@ -527,6 +527,7 @@ bool viaems_new_data(struct protocol *p, const uint8_t *data, size_t len) {
     handle_response_message(p, &root);
     return true;
   }
+  return false;
 }
 
 static void blocking_structure_callback(struct structure_node *root, void *userdata) {
@@ -567,6 +568,7 @@ bool viaems_get_structure_async(struct protocol *p, structure_callback callback,
   if (p->write) {
     p->write(p->write_userdata, buf, written_size);
   }
+  return true;
 }
 
 static struct timespec time_ms_from_now(int ms) {

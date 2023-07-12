@@ -1,4 +1,4 @@
-CLAGS=-O3 -flto -g
+CFLAGS=-O2 -g -flto -Wall
 CFLAGS+= -I tinycbor/src
 LDLIBS= -lusb-1.0 -L tinycbor/lib -l:libtinycbor.a
 
