@@ -123,7 +123,7 @@ bool structure_node_is_leaf(struct structure_node *);
 void structure_destroy(struct structure_node *root);
 struct structure_node *structure_find_node(struct structure_node *root, const char *path);
 
-typedef void (*write_fn)(void *userdata, const uint8_t *bytes, size_t len);
+typedef void (*write_fn)(void *userdata, uint8_t *bytes, size_t len);
 
 typedef void (*feed_callback)(size_t n_fields, const struct field_key *keys, const union field_value *);
 typedef void (*structure_callback)(struct structure_node *root, void *userdata);
